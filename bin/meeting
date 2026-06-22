@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# meeting — agent-agnostic meeting recorder + local transcriber.
+#
+# Two-layer design: this CLI does only the part agents can't do —
+# capture audio (ffmpeg) and transcribe locally (whisper.cpp). The smart
+# half (summary / decisions / action items / routing) is left to whatever
+# host agent calls this CLI (Claude Code skill, Codex command, …).
+#
+# Final stdout of `stop` / `transcribe` is ALWAYS the transcript path, so
+# the calling agent can read it without parsing chatter (chatter → stderr).
+set -euo pipefail
+
+MEETING_HOME="${MEETING_HOME:-$HOME/.meeting}"
+REC_DIR="$MEETING_HOME/recordings"
+MODEL_DIR="$MEETING_HOME/models"
+NOTES_DIR="$MEETING_HOME/notes"
+STATE="$MEETING_HOME/state"
+PIDFILE="$MEETING_HOME/recording.pid"
+LOG="$MEETING_HOME/ffmpeg.log"
+
+MODEL="${MEETING_MODEL:-$MODEL_DIR/ggml-large-v3-turbo.bin}"
+AUDIO_INPUT="${MEETING_AUDIO_INPUT:-:0}"   # avfoundation audio index; see `meeting devices`
+LANG_OPT="${MEETING_LANG:-auto}"           # zh / en / auto
+MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+
+mkdir -p "$REC_DIR" "$MODEL_DIR" "$NOTES_DIR"
+
+die(){ echo "meeting: $*" >&2; exit 1; }
+whisper_bin(){ command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null || true; }
+
+cmd_devices(){
+  command -v ffmpeg >/dev/null || die "missing ffmpeg — run: brew install ffmpeg"
+  echo "Audio inputs (use the [n] index as MEETING_AUDIO_INPUT=:n):" >&2
+  ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 \
+    | sed -n '/AVFoundation audio devices/,$p' || true
+}
+
+cmd_start(){
+  command -v ffmpeg >/dev/null || die "missing ffmpeg — run: brew install ffmpeg"
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    die "already recording (pid $(cat "$PIDFILE")). run 'meeting stop' first."
+  fi
+  ts="$(/bin/date +%Y%m%d-%H%M%S)"
+  out="$REC_DIR/$ts.wav"
+  echo "$out" > "$STATE"
+  # 16k mono wav = exactly what whisper wants, and small.
+  nohup ffmpeg -hide_banner -nostdin -f avfoundation -i "$AUDIO_INPUT" \
+    -ar 16000 -ac 1 -y "$out" >"$LOG" 2>&1 &
+  echo $! > "$PIDFILE"
+  disown 2>/dev/null || true
+  echo "● recording → $out  (pid $(cat "$PIDFILE"))" >&2
+  echo "  stop with: meeting stop" >&2
+}
+
+cmd_stop(){
+  [ -f "$PIDFILE" ] || die "not recording."
+  pid="$(cat "$PIDFILE")"; out="$(cat "$STATE")"
+  kill -INT "$pid" 2>/dev/null || true          # SIGINT → ffmpeg finalizes the wav
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+  rm -f "$PIDFILE"
+  [ -s "$out" ] || die "recording empty: $out (mic permission? see $LOG)"
+  echo "■ stopped: $out" >&2
+  cmd_transcribe "$out"
+}
+
+cmd_transcribe(){
+  audio="${1:-$(cat "$STATE" 2>/dev/null || true)}"
+  [ -n "$audio" ] && [ -f "$audio" ] || die "no audio file to transcribe."
+  bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
+  [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
+  base="${audio%.*}"
+  echo "… transcribing ($(basename "$MODEL"), lang=$LANG_OPT) …" >&2
+  "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -otxt -of "$base" >/dev/null 2>&1
+  echo "$base.txt"      # <- final stdout: the transcript path
+}
+
+cmd_setup(){
+  command -v brew >/dev/null || die "need Homebrew — see https://brew.sh"
+  [ -n "$(whisper_bin)" ] || brew install whisper-cpp
+  if [ ! -f "$MODEL" ]; then
+    echo "downloading model (~1.6GB) → $MODEL" >&2
+    curl -L --fail -o "$MODEL" "$MODEL_URL"
+  fi
+  echo "setup ok. whisper=$(whisper_bin) model=$MODEL" >&2
+}
+
+case "${1:-}" in
+  start)      cmd_start ;;
+  stop)       cmd_stop ;;
+  transcribe) shift; cmd_transcribe "${1:-}" ;;
+  devices)    cmd_devices ;;
+  setup)      cmd_setup ;;
+  *) echo "usage: meeting {start|stop|transcribe [file]|devices|setup}" >&2; exit 1 ;;
+esac

@@ -1,0 +1,6 @@
+# Runtime data never lives in the repo — recordings, models (~1.6GB), and notes
+# all go to $MEETING_HOME (default ~/.meeting). The repo stays code-only & tiny.
+.DS_Store
+*.log
+.vscode/
+.idea/
