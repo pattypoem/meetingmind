@@ -128,16 +128,36 @@ cmd_stop(){
   cmd_transcribe "$out"
 }
 
+# whisper initial prompt = a glossary of YOUR domain terms / proper nouns, so whisper
+# spells them right (e.g. 具身/Embodiment not 巨神). Source: $MEETING_PROMPT, else
+# ~/.meeting/glossary.txt — which the host agent maintains from your Claude Code
+# memory / repo / past transcripts. The CLI just reads it; it doesn't decide content.
+meeting_prompt(){
+  if [ -n "${MEETING_PROMPT:-}" ]; then printf '%s' "$MEETING_PROMPT"; return; fi
+  [ -f "$MEETING_HOME/glossary.txt" ] && tr '\n' ' ' < "$MEETING_HOME/glossary.txt"
+}
+
 cmd_transcribe(){
   audio="${1:-$(cat "$STATE" 2>/dev/null || true)}"
   [ -n "$audio" ] && [ -f "$audio" ] || die "no audio file to transcribe."
   bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
   [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
-  base="${audio%.*}"
-  echo "… 本地转录中 ($(basename "$MODEL"))  —— 进度见下方 …" >&2
-  "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -of "$base" 1>/dev/null   # -pp = print progress (stderr)
+  base="${audio%.*}"; prompt="$(meeting_prompt)"
+  echo "… 本地转录中 ($(basename "$MODEL"))$([ -n "$prompt" ] && printf ' + 术语表')  —— 进度见下方 …" >&2
+  if [ -n "$prompt" ]; then
+    "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" --prompt "$prompt" -pp -otxt -of "$base" 1>/dev/null
+  else
+    "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -of "$base" 1>/dev/null   # -pp = print progress (stderr)
+  fi
   echo "✓ 转录完成 → $base.txt" >&2
   echo "$base.txt"      # <- final stdout: the transcript path
+}
+
+cmd_glossary(){
+  p="$(meeting_prompt)"
+  echo "喂给 whisper --prompt 的术语表:" >&2
+  if [ -n "$p" ]; then printf '%s\n' "$p"
+  else echo "(空 —— 由 agent 从 memory/repo/历史转录整理后写入 $MEETING_HOME/glossary.txt)" >&2; fi
 }
 
 cmd_setup(){
@@ -156,9 +176,10 @@ case "${1:-}" in
   stop)       cmd_stop ;;
   status)     cmd_status ;;
   transcribe) shift; cmd_transcribe "${1:-}" ;;
+  glossary)   cmd_glossary ;;
   devices)    cmd_devices ;;
   setup)      cmd_setup ;;
-  *) echo "usage: meeting {rec|start|stop|status|transcribe [file]|devices|setup}" >&2
+  *) echo "usage: meeting {rec|start|stop|status|transcribe [file]|glossary|devices|setup}" >&2
      echo "  rec   前台录音+实时电平条(推荐,直接在终端跑;Ctrl-C 结束并转录)" >&2
      echo "  start 后台录音(给 agent/脚本用),配合 stop" >&2
      exit 1 ;;
