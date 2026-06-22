@@ -6,8 +6,10 @@
 # half (summary / decisions / action items / routing) is left to whatever
 # host agent calls this CLI (Claude Code skill, Codex command, …).
 #
-# Final stdout of `stop` / `transcribe` is ALWAYS the transcript path, so
-# the calling agent can read it without parsing chatter (chatter → stderr).
+# Realtime control (start/stop/status) is meant to be run DIRECTLY in a
+# terminal for instant, unambiguous feedback — the agent path adds an LLM
+# round-trip and can't render live feedback while idle. Final stdout of
+# transcribe/stop is ALWAYS the transcript path (chatter goes to stderr).
 set -euo pipefail
 
 MEETING_HOME="${MEETING_HOME:-$HOME/.meeting}"
@@ -27,6 +29,7 @@ mkdir -p "$REC_DIR" "$MODEL_DIR" "$NOTES_DIR"
 
 die(){ echo "meeting: $*" >&2; exit 1; }
 whisper_bin(){ command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null || true; }
+elapsed(){ grep -o 'time=[0-9:.]*' "$LOG" 2>/dev/null | tail -1 | cut -d= -f2; }
 
 cmd_devices(){
   command -v ffmpeg >/dev/null || die "missing ffmpeg — run: brew install ffmpeg"
@@ -43,23 +46,53 @@ cmd_start(){
   ts="$(/bin/date +%Y%m%d-%H%M%S)"
   out="$REC_DIR/$ts.wav"
   echo "$out" > "$STATE"
-  # 16k mono wav = exactly what whisper wants, and small.
+  : > "$LOG"
   nohup ffmpeg -hide_banner -nostdin -f avfoundation -i "$AUDIO_INPUT" \
     -ar 16000 -ac 1 -y "$out" >"$LOG" 2>&1 &
-  echo $! > "$PIDFILE"
-  disown 2>/dev/null || true
-  echo "● recording → $out  (pid $(cat "$PIDFILE"))" >&2
-  echo "  stop with: meeting stop" >&2
+  pid=$!; echo "$pid" > "$PIDFILE"; disown 2>/dev/null || true
+  # Verify capture actually began (catches denied mic permission) before claiming success.
+  sleep 1.5
+  if kill -0 "$pid" 2>/dev/null && grep -q "size=" "$LOG" && ! grep -qi "error opening input\|input/output error" "$LOG"; then
+    {
+      echo "┌──────────────────────────────────────────────"
+      echo "│ ●REC  正在录音 — 已确认音频写入 ✓"
+      echo "│ 文件 $out"
+      echo "│ 设备 $AUDIO_INPUT    pid $pid"
+      echo "│ 看状态: meeting status      结束: meeting stop"
+      echo "└──────────────────────────────────────────────"
+    } >&2
+  else
+    rm -f "$PIDFILE"
+    {
+      echo "✗ 录音没起来 —— 最可能是终端没拿到「麦克风」权限。"
+      echo "  系统设置 ▸ 隐私与安全性 ▸ 麦克风 → 勾上你的终端,再 meeting start。"
+      echo "  ffmpeg 日志: $LOG"
+    } >&2
+    exit 1
+  fi
+}
+
+cmd_status(){
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "●REC 正在录音   已录 $(elapsed)   pid $(cat "$PIDFILE")   → $(cat "$STATE" 2>/dev/null)"
+  else
+    echo "○ 当前未在录音"
+  fi
 }
 
 cmd_stop(){
   [ -f "$PIDFILE" ] || die "not recording."
-  pid="$(cat "$PIDFILE")"; out="$(cat "$STATE")"
+  pid="$(cat "$PIDFILE")"; out="$(cat "$STATE")"; dur="$(elapsed)"
   kill -INT "$pid" 2>/dev/null || true          # SIGINT → ffmpeg finalizes the wav
   for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
   rm -f "$PIDFILE"
   [ -s "$out" ] || die "recording empty: $out (mic permission? see $LOG)"
-  echo "■ stopped: $out" >&2
+  size="$(ls -lh "$out" | awk '{print $5}')"
+  # Instant, unambiguous "recording ended" BEFORE the (slower) transcription step.
+  {
+    echo "■ 录音已结束  STOPPED   时长 ${dur:-?}   大小 ${size}"
+    echo "  $out"
+  } >&2
   cmd_transcribe "$out"
 }
 
@@ -69,8 +102,9 @@ cmd_transcribe(){
   bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
   [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
   base="${audio%.*}"
-  echo "… transcribing ($(basename "$MODEL"), lang=$LANG_OPT) …" >&2
-  "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -otxt -of "$base" >/dev/null 2>&1
+  echo "… 本地转录中 ($(basename "$MODEL"))  —— 进度见下方 …" >&2
+  "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -of "$base" 1>/dev/null   # -pp = print progress (stderr)
+  echo "✓ 转录完成 → $base.txt" >&2
   echo "$base.txt"      # <- final stdout: the transcript path
 }
 
@@ -87,8 +121,9 @@ cmd_setup(){
 case "${1:-}" in
   start)      cmd_start ;;
   stop)       cmd_stop ;;
+  status)     cmd_status ;;
   transcribe) shift; cmd_transcribe "${1:-}" ;;
   devices)    cmd_devices ;;
   setup)      cmd_setup ;;
-  *) echo "usage: meeting {start|stop|transcribe [file]|devices|setup}" >&2; exit 1 ;;
+  *) echo "usage: meeting {start|stop|status|transcribe [file]|devices|setup}" >&2; exit 1 ;;
 esac
