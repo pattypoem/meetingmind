@@ -23,6 +23,8 @@ LOG="$MEETING_HOME/ffmpeg.log"
 MODEL="${MEETING_MODEL:-$MODEL_DIR/ggml-large-v3-turbo.bin}"
 AUDIO_INPUT="${MEETING_AUDIO_INPUT:-:0}"   # avfoundation audio index; see `meeting devices`
 LANG_OPT="${MEETING_LANG:-auto}"           # zh / en / auto
+MAX_MIN="${MEETING_MAX_MIN:-180}"          # auto-stop after N min (0 = no cap) — prevents runaway recordings
+MIN_FREE_MB="${MEETING_MIN_FREE_MB:-500}"  # warn if free disk < this before recording
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
 
 mkdir -p "$REC_DIR" "$MODEL_DIR" "$NOTES_DIR"
@@ -30,6 +32,21 @@ mkdir -p "$REC_DIR" "$MODEL_DIR" "$NOTES_DIR"
 die(){ echo "meeting: $*" >&2; exit 1; }
 whisper_bin(){ command -v whisper-cli 2>/dev/null || command -v whisper-cpp 2>/dev/null || true; }
 elapsed(){ grep -o 'time=[0-9:.]*' "$LOG" 2>/dev/null | tail -1 | cut -d= -f2; }
+cap_sec(){ echo $(( (MAX_MIN > 0 ? MAX_MIN : 999999) * 60 )); }   # ffmpeg -t value
+cap_note(){ [ "$MAX_MIN" -gt 0 ] 2>/dev/null && printf '上限 %s 分钟自动停(MEETING_MAX_MIN=0 取消)' "$MAX_MIN"; }
+
+# Warn (don't block) if disk is low — a full disk corrupts the recording tail.
+disk_warn(){
+  free_mb=$(df -m "$REC_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+  case "${free_mb:-}" in (''|*[!0-9]*) return 0;; esac
+  [ "$free_mb" -lt "$MIN_FREE_MB" ] && echo "⚠ 磁盘剩余约 ${free_mb}MB(录音约 2MB/分钟,注意空间)。" >&2
+  return 0
+}
+
+# Count recordings with no sibling .txt (e.g. left by a crash/hard-kill).
+orphan_count(){
+  n=0; for w in "$REC_DIR"/*.wav; do [ -e "$w" ] || continue; [ -f "${w%.*}.txt" ] || n=$((n+1)); done; echo "$n"
+}
 
 cmd_devices(){
   command -v ffmpeg >/dev/null || die "missing ffmpeg — run: brew install ffmpeg"
@@ -43,12 +60,13 @@ cmd_start(){
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     die "already recording (pid $(cat "$PIDFILE")). run 'meeting stop' first."
   fi
+  disk_warn
   ts="$(/bin/date +%Y%m%d-%H%M%S)"
   out="$REC_DIR/$ts.wav"
   echo "$out" > "$STATE"
   : > "$LOG"
   nohup ffmpeg -hide_banner -nostdin -f avfoundation -i "$AUDIO_INPUT" \
-    -ar 16000 -ac 1 -y "$out" >"$LOG" 2>&1 &
+    -ar 16000 -ac 1 -t "$(cap_sec)" -y "$out" >"$LOG" 2>&1 &
   pid=$!; echo "$pid" > "$PIDFILE"; disown 2>/dev/null || true
   # Verify capture actually began (catches denied mic permission) before claiming success.
   sleep 1.5
@@ -57,7 +75,7 @@ cmd_start(){
       echo "┌──────────────────────────────────────────────"
       echo "│ ●REC  正在录音 — 已确认音频写入 ✓"
       echo "│ 文件 $out"
-      echo "│ 设备 $AUDIO_INPUT    pid $pid"
+      echo "│ 设备 $AUDIO_INPUT    pid $pid    $(cap_note)"
       echo "│ 看状态: meeting status      结束: meeting stop"
       echo "└──────────────────────────────────────────────"
     } >&2
@@ -77,7 +95,9 @@ cmd_status(){
     echo "●REC 正在录音   已录 $(elapsed)   pid $(cat "$PIDFILE")   → $(cat "$STATE" 2>/dev/null)"
   else
     echo "○ 当前未在录音"
+    n="$(orphan_count)"; [ "$n" -gt 0 ] && echo "  ⚠ $n 个录音还没转录(可能上次崩了)→ meeting recover" >&2
   fi
+  return 0
 }
 
 # Foreground recorder with a LIVE level meter — the snappy, unambiguous path.
@@ -88,15 +108,16 @@ cmd_rec(){
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     die "a background recording (meeting start) is running — 'meeting stop' it first."
   fi
+  disk_warn
   ts="$(/bin/date +%Y%m%d-%H%M%S)"; out="$REC_DIR/$ts.wav"; echo "$out" > "$STATE"
   {
-    echo "●REC 前台录音 — 对着麦说话,电平条会跟着跳。Ctrl-C 结束并自动转录。"
+    echo "●REC 前台录音 — 对着麦说话,电平条会跟着跳。Ctrl-C 结束并自动转录。$(cap_note)"
     echo "  → $out"
   } >&2
   trap 'true' INT   # let ffmpeg catch Ctrl-C & finalize the wav; keep this script alive to transcribe after
   # ebur128 passes audio through to the wav AND prints momentary loudness (M:) to stderr.
   ffmpeg -hide_banner -nostdin -f avfoundation -i "$AUDIO_INPUT" \
-    -af ebur128 -ar 16000 -ac 1 -y "$out" 2>&1 \
+    -af ebur128 -ar 16000 -ac 1 -t "$(cap_sec)" -y "$out" 2>&1 \
   | awk -v W=28 '
       function bar(v,   f,n,i,s){ f=(v+50)/40; if(f<0)f=0; if(f>1)f=1; n=int(f*W); s=""; for(i=0;i<W;i++) s=s (i<n?"\342\226\210":" "); return s }
       / M:/ { t=""; m=""; for(i=1;i<=NF;i++){ if($i=="t:") t=$(i+1); if($i=="M:") m=$(i+1) }
@@ -160,12 +181,37 @@ cmd_glossary(){
   else echo "(空 —— 由 agent 从 memory/repo/历史转录整理后写入 $MEETING_HOME/glossary.txt)" >&2; fi
 }
 
+# Recover orphaned recordings: any .wav without a sibling .txt (left by a crash /
+# hard kill / power loss). Re-mux through ffmpeg to repair a possibly-unfinalized
+# WAV header, then transcribe. Safe to run anytime; idempotent.
+cmd_recover(){
+  found=0
+  for wav in "$REC_DIR"/*.wav; do
+    [ -e "$wav" ] || continue
+    base="${wav%.*}"
+    [ -f "$base.txt" ] && continue                 # already transcribed
+    [ -s "$wav" ] || { echo "跳过空文件 $wav" >&2; continue; }
+    found=1
+    echo "↻ 恢复 $wav …" >&2
+    fixed="$base.fixed.wav"
+    if ffmpeg -hide_banner -v error -y -i "$wav" -c copy "$fixed" 2>/dev/null && [ -s "$fixed" ]; then
+      mv -f "$fixed" "$wav"                         # replace with header-repaired copy
+    else
+      rm -f "$fixed"                                # repair failed → try the original as-is
+    fi
+    ( cmd_transcribe "$wav" >/dev/null ) || echo "  ✗ 转录失败,保留原始音频: $wav" >&2
+  done
+  [ "$found" = 1 ] || echo "没有未转录的孤儿录音。" >&2
+}
+
 cmd_setup(){
   command -v brew >/dev/null || die "need Homebrew — see https://brew.sh"
   [ -n "$(whisper_bin)" ] || brew install whisper-cpp
-  if [ ! -f "$MODEL" ]; then
+  # (re)download if missing OR implausibly small (catches a truncated partial download).
+  if [ ! -f "$MODEL" ] || [ "$(wc -c < "$MODEL" 2>/dev/null || echo 0)" -lt 100000000 ]; then
     echo "downloading model (~1.6GB) → $MODEL" >&2
-    curl -L --fail -o "$MODEL" "$MODEL_URL"
+    tmp="$MODEL.part"
+    if curl -L --fail -o "$tmp" "$MODEL_URL"; then mv -f "$tmp" "$MODEL"; else rm -f "$tmp"; die "model download failed (network?). re-run: meeting setup"; fi
   fi
   echo "setup ok. whisper=$(whisper_bin) model=$MODEL" >&2
 }
@@ -176,11 +222,13 @@ case "${1:-}" in
   stop)       cmd_stop ;;
   status)     cmd_status ;;
   transcribe) shift; cmd_transcribe "${1:-}" ;;
+  recover)    cmd_recover ;;
   glossary)   cmd_glossary ;;
   devices)    cmd_devices ;;
   setup)      cmd_setup ;;
-  *) echo "usage: meeting {rec|start|stop|status|transcribe [file]|glossary|devices|setup}" >&2
-     echo "  rec   前台录音+实时电平条(推荐,直接在终端跑;Ctrl-C 结束并转录)" >&2
-     echo "  start 后台录音(给 agent/脚本用),配合 stop" >&2
+  *) echo "usage: meeting {rec|start|stop|status|transcribe [file]|recover|glossary|devices|setup}" >&2
+     echo "  rec     前台录音+实时电平条(推荐,直接在终端跑;Ctrl-C 结束并转录)" >&2
+     echo "  start   后台录音(给 agent/脚本用),配合 stop" >&2
+     echo "  recover 把崩溃/断电留下的未转录录音修复并转录" >&2
      exit 1 ;;
 esac
