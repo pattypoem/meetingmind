@@ -80,6 +80,38 @@ cmd_status(){
   fi
 }
 
+# Foreground recorder with a LIVE level meter — the snappy, unambiguous path.
+# Run this directly in a terminal (NOT via the agent): instant start, a bar that
+# moves with your voice (so you SEE it's capturing), Ctrl-C to stop + transcribe.
+cmd_rec(){
+  command -v ffmpeg >/dev/null || die "missing ffmpeg — run: brew install ffmpeg"
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    die "a background recording (meeting start) is running — 'meeting stop' it first."
+  fi
+  ts="$(/bin/date +%Y%m%d-%H%M%S)"; out="$REC_DIR/$ts.wav"; echo "$out" > "$STATE"
+  {
+    echo "●REC 前台录音 — 对着麦说话,电平条会跟着跳。Ctrl-C 结束并自动转录。"
+    echo "  → $out"
+  } >&2
+  trap 'true' INT   # let ffmpeg catch Ctrl-C & finalize the wav; keep this script alive to transcribe after
+  # ebur128 passes audio through to the wav AND prints momentary loudness (M:) to stderr.
+  ffmpeg -hide_banner -nostdin -f avfoundation -i "$AUDIO_INPUT" \
+    -af ebur128 -ar 16000 -ac 1 -y "$out" 2>&1 \
+  | awk -v W=28 '
+      function bar(v,   f,n,i,s){ f=(v+50)/40; if(f<0)f=0; if(f>1)f=1; n=int(f*W); s=""; for(i=0;i<W;i++) s=s (i<n?"\342\226\210":" "); return s }
+      / M:/ { t=""; m=""; for(i=1;i<=NF;i++){ if($i=="t:") t=$(i+1); if($i=="M:") m=$(i+1) }
+              if(m=="" || m=="nan" || m=="-nan") next;
+              sec=int(t+0); mm=int(sec/60); ss=sec%60;
+              printf("\r\033[K\033[32m●REC\033[0m %02d:%02d  [%s] %6.1f LUFS   [Ctrl-C 结束]", mm, ss, bar(m+0), m+0) > "/dev/stderr"; fflush() }
+    ' || true
+  trap - INT
+  printf "\n" >&2
+  [ -s "$out" ] || die "recording empty: $out (mic permission? see above)"
+  size="$(ls -lh "$out" | awk '{print $5}')"
+  echo "■ 录音已结束 STOPPED  大小 ${size}  → $out" >&2
+  cmd_transcribe "$out"
+}
+
 cmd_stop(){
   [ -f "$PIDFILE" ] || die "not recording."
   pid="$(cat "$PIDFILE")"; out="$(cat "$STATE")"; dur="$(elapsed)"
@@ -119,11 +151,15 @@ cmd_setup(){
 }
 
 case "${1:-}" in
+  rec)        cmd_rec ;;
   start)      cmd_start ;;
   stop)       cmd_stop ;;
   status)     cmd_status ;;
   transcribe) shift; cmd_transcribe "${1:-}" ;;
   devices)    cmd_devices ;;
   setup)      cmd_setup ;;
-  *) echo "usage: meeting {start|stop|status|transcribe [file]|devices|setup}" >&2; exit 1 ;;
+  *) echo "usage: meeting {rec|start|stop|status|transcribe [file]|devices|setup}" >&2
+     echo "  rec   前台录音+实时电平条(推荐,直接在终端跑;Ctrl-C 结束并转录)" >&2
+     echo "  start 后台录音(给 agent/脚本用),配合 stop" >&2
+     exit 1 ;;
 esac

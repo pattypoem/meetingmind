@@ -44,30 +44,37 @@ and the same core reusable across agent ecosystems.
 meeting setup         # brew install whisper-cpp + download model (~1.6GB)
 ```
 
-## Use
+## Use — the hybrid model
 
-In Claude Code:
+Recording is realtime; a terminal agent is turn-based. So **record with the CLI
+(instant, with a live level meter), and let the agent do the summary.** This avoids
+the LLM round-trip and opaque "did it start?" feeling of driving recording through a skill.
 
-```
-/meeting start        # starts recording in the background
-…meeting happens…
-/meeting stop         # stops, transcribes locally, then summarizes + extracts action items
-```
-
-Or process an existing file:
-
-```
-/meeting ~/Downloads/some-recording.m4a
-/meeting ~/Downloads/existing-transcript.txt
-```
-
-CLI directly (no agent):
+**1. Record (directly in a terminal):**
 
 ```bash
-meeting start
-meeting stop          # prints the transcript .txt path
+meeting rec           # foreground recorder + live meter; Ctrl-C stops & transcribes
+# ●REC 00:23  [███████████████         ]  -18.4 LUFS   [Ctrl-C 结束]
+```
+
+**2. Summarize (in Claude Code):**
+
+```
+/meeting              # summarizes the most recent transcript → notes + action items
+```
+
+### Other CLI commands
+
+```bash
+meeting status        # ●REC + elapsed, or ○ not recording
+meeting start         # background record (for agent/scripts); pair with `meeting stop`
+meeting stop          # finalize + transcribe; prints the transcript .txt path
+meeting transcribe F  # (re)transcribe an audio file
 meeting devices       # list audio input indices (set MEETING_AUDIO_INPUT=:n)
 ```
+
+`meeting rec` vs `meeting start`: `rec` is the human path (foreground, live meter, Ctrl-C).
+`start`/`stop` is the headless path an agent or script drives.
 
 ## Config (env vars)
 
