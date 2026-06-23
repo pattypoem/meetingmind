@@ -11,8 +11,9 @@
 
 **No app. No UI. No cloud.** One command in the terminal.
 
-<!-- TODO: record a demo — `meeting rec`, speak, Ctrl-C — and drop it here -->
-<!-- ![demo](docs/demo.gif) -->
+![demo](docs/demo.gif)
+
+<sub>Illustrative demo (synthetic — no real meeting content). Record your own with the steps in <a href="CONTRIBUTING.md">CONTRIBUTING</a>.</sub>
 
 ## Why this, not another meeting app
 
