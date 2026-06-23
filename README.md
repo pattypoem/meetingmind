@@ -7,7 +7,7 @@
 
 ![platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-<!-- ![CI](https://github.com/pattypoem/meeting-agent/actions/workflows/ci.yml/badge.svg) -->
+![CI](https://github.com/pattypoem/meeting-agent/actions/workflows/ci.yml/badge.svg)
 
 **No app. No UI. No cloud.** One command in the terminal.
 
