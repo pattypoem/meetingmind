@@ -117,7 +117,7 @@ past notes — so it learns *your* vocabulary over time. `meeting glossary` prin
 - **macOS / Apple Silicon only** right now (avfoundation capture; whisper.cpp Metal).
 - **No speaker diarization** yet — multi-person transcripts aren't split by speaker.
 - **Far-field multi-speaker accuracy** is much lower than a single close mic.
-- Capturing the *other side* of a Zoom call needs a virtual audio device (BlackHole) — see roadmap.
+- Capturing the *other side* of a Zoom call needs a virtual audio device (BlackHole) — see [docs/zoom-capture.md](docs/zoom-capture.md).
 
 ## Roadmap
 
