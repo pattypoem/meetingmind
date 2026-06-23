@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to this project are documented here.
+Format based on [Keep a Changelog](https://keepachangelog.com/).
+
+## [0.1.0] — unreleased
+
+### Added
+- Core CLI `meeting`: `rec` (foreground recorder + live level meter), `start`/`stop` (background,
+  cross-window), `status`, `transcribe`, `recover`, `glossary`, `devices`, `setup`.
+- Local transcription via whisper.cpp (ggml-large-v3-turbo), Metal-accelerated on Apple Silicon.
+- Context-aware glossary fed to whisper `--prompt`; the Claude Code agent maintains it from editor
+  memory / repo / past notes so transcripts spell your domain terms right.
+- Claude Code skill (`/meeting`) that records → transcribes → summarizes (summary / decisions /
+  action items) and files notes to `~/.meeting/notes/`.
+- Robustness: verified start (catches denied mic permission), `MEETING_MAX_MIN` auto-stop cap,
+  low-disk warning, atomic model download, and crash recovery (`meeting recover`).
+
+### Known limitations
+- macOS / Apple Silicon only; no speaker diarization; no Zoom system-audio capture yet.

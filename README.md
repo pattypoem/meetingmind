@@ -1,95 +1,136 @@
 # meeting-agent
 
-> Agent-native meeting notes. No app, no UI — one command inside Claude Code / Codex.
-> Records locally, transcribes locally (whisper.cpp), and lets your coding agent do
-> the summary, action-item extraction, and routing.
+> Agent-native meeting notes for your terminal. Record locally, transcribe locally
+> (whisper.cpp), and let your coding agent (Claude Code / Codex) do the summary,
+> action-item extraction, and filing — with a glossary built from *your* context so
+> it spells your jargon right.
 
-## Why this instead of another meeting app
+![platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black)
+![license](https://img.shields.io/badge/license-MIT-blue)
+<!-- ![CI](https://github.com/pattypoem/meeting-agent/actions/workflows/ci.yml/badge.svg) -->
 
-The "local whisper + LLM summary" space is crowded (Granola, Hyprnote, Meetily,
-MacWhisper…). This project does **not** compete on UX. Its bet is positioning:
+**No app. No UI. No cloud.** One command in the terminal.
 
-- **Lives where you already work** — a terminal agent (Claude Code / Codex), not a separate app.
-- **Agentic, not a notes dump** — you can *ask follow-ups* about the transcript and the
-  agent can *take actions* (write to Notion via MCP, open an issue, link decisions to code).
-- **No UI to build, no extra LLM key** — the summarization is done by the host agent itself.
+<!-- TODO: record a demo — `meeting rec`, speak, Ctrl-C — and drop it here -->
+<!-- ![demo](docs/demo.gif) -->
 
-## Architecture (two layers)
+## Why this, not another meeting app
 
-```
-┌─ agent-agnostic core ──────────────┐     ┌─ thin per-agent adapter ─────────┐
-│  bin/meeting                       │     │  skills/claude/meeting/SKILL.md  │  → /meeting in Claude Code
-│   • record  (ffmpeg)               │ ◀── │  skills/codex/...  (phase 2)     │  → command in Codex
-│   • transcribe (whisper.cpp)       │     │  the host agent reads the        │
-│   • emits transcript path on stdout│     │  transcript & does summary/route │
-└────────────────────────────────────┘     └──────────────────────────────────┘
-```
+The "local whisper + LLM summary" space is crowded (Granola, Hyprnote, Meetily, MacWhisper).
+meeting-agent doesn't compete on UX. Its bet:
 
-The core is just record + transcribe — the only things an agent can't do itself.
-Everything intelligent is the agent's job, which is what keeps the surface area tiny
-and the same core reusable across agent ecosystems.
+- **Lives where you already work** — a terminal agent, not a separate app.
+- **Context-aware** — the agent builds a glossary from your editor memory / repo / past notes,
+  so whisper spells *your* product names and teammates right, not a generic guess.
+- **Agentic** — ask follow-ups about a transcript; the agent can act (file notes, open issues…).
+- **Fully local & private** — recording + transcription never touch the network.
 
 ## Requirements
 
-- macOS on Apple Silicon (v0 target — scoped deliberately; cross-OS later)
-- `ffmpeg` (`brew install ffmpeg`)
+- **macOS on Apple Silicon** (current scope — see [Limitations](#limitations))
+- `ffmpeg` — `brew install ffmpeg`
 - `whisper.cpp` + a model — installed by `meeting setup`
-- Optional: **BlackHole** (virtual audio) to capture the *other side* of a Zoom call.
-  Mic-only (in-person, or your own voice) needs nothing extra.
 
 ## Install
 
 ```bash
-./install.sh          # symlinks bin/meeting to ~/.local/bin, installs the Claude Code skill
-meeting setup         # brew install whisper-cpp + download model (~1.6GB)
+git clone https://github.com/pattypoem/meeting-agent
+cd meeting-agent
+./install.sh        # symlinks bin/meeting to ~/.local/bin; installs the Claude Code skill
+meeting setup       # brew install whisper-cpp + download model (~1.6GB)
 ```
 
-## Use — the hybrid model
+## Two ways to use it (read this)
 
-Recording is realtime; a terminal agent is turn-based. So **record with the CLI
-(instant, with a live level meter), and let the agent do the summary.** This avoids
-the LLM round-trip and opaque "did it start?" feeling of driving recording through a skill.
-
-**1. Record (directly in a terminal):**
-
-```bash
-meeting rec           # foreground recorder + live meter; Ctrl-C stops & transcribes
-# ●REC 00:23  [███████████████         ]  -18.4 LUFS   [Ctrl-C 结束]
-```
-
-**2. Summarize (in Claude Code):**
+Recording is real-time; a terminal agent is turn-based. So there are **two modes that don't mix**:
 
 ```
-/meeting              # summarizes the most recent transcript → notes + action items
+┌─ meeting rec ── foreground · YOU run it in a terminal ──────────────┐
+│  live level meter + timer · Ctrl-C stops & transcribes              │
+│  ●REC 00:23  [███████████          ]  -18.4 LUFS   [Ctrl-C]         │
+└──────────────────────────────────────────────────────────────────────┘
+         ↓ then, in Claude Code:
+   /meeting          → the agent summarizes the latest transcript
+
+┌─ meeting start / stop ── background · for agents & scripts ─────────┐
+│  detached recorder; stop from ANY window/session                    │
+│  coordinates via files in ~/.meeting/ (not tied to a terminal)      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Other CLI commands
+- **`meeting rec`** — the human path. Holds the terminal, shows a live meter, stop with **Ctrl-C**
+  there. It is **not** stopped by `meeting stop`.
+- **`meeting start` + `meeting stop`** — the headless path. Start detached, stop from anywhere.
+  This is the only pair where "start here, stop in another window" works.
 
-```bash
-meeting status        # ●REC + elapsed, or ○ not recording
-meeting start         # background record (for agent/scripts); pair with `meeting stop`
-meeting stop          # finalize + transcribe; prints the transcript .txt path
-meeting transcribe F  # (re)transcribe an audio file
-meeting devices       # list audio input indices (set MEETING_AUDIO_INPUT=:n)
-```
+## Commands
 
-`meeting rec` vs `meeting start`: `rec` is the human path (foreground, live meter, Ctrl-C).
-`start`/`stop` is the headless path an agent or script drives.
+| command | what | where |
+|---|---|---|
+| `meeting rec` | foreground record + live meter; Ctrl-C → stop + transcribe | terminal (recommended) |
+| `meeting start` / `meeting stop` | background record / stop + transcribe | any window |
+| `meeting status` | recording? elapsed? warns about un-transcribed leftovers | any |
+| `meeting transcribe [file]` | transcribe an audio file (or the last recording) | any |
+| `meeting recover` | repair + transcribe recordings left by a crash/hard-kill | any |
+| `meeting glossary` | show the term list fed to whisper | any |
+| `meeting devices` | list audio input indices | any |
+| `meeting setup` | install whisper.cpp + download the model | once |
+| `/meeting [start\|stop\|<file>]` | Claude Code skill: runs the CLI **+ summarizes & files notes** | Claude Code |
 
-## Config (env vars)
+## Configuration
 
-| var | default | meaning |
-|-----|---------|---------|
-| `MEETING_MODEL` | `~/.meeting/models/ggml-large-v3-turbo.bin` | whisper model (use `ggml-large-v3` for max accuracy, `ggml-medium` for smaller) |
-| `MEETING_LANG`  | `auto` | `zh` / `en` / `auto` |
-| `MEETING_AUDIO_INPUT` | `:0` | avfoundation audio index (`meeting devices` to list) |
-| `MEETING_HOME`  | `~/.meeting` | recordings / models / notes live here |
+| env | default | meaning |
+|---|---|---|
+| `MEETING_HOME` | `~/.meeting` | where recordings / models / notes / glossary live |
+| `MEETING_MODEL` | `…/ggml-large-v3-turbo.bin` | whisper model (point at a smaller/quantized one for slower machines) |
+| `MEETING_LANG` | `auto` | `zh` / `en` / `auto` |
+| `MEETING_AUDIO_INPUT` | `:0` | avfoundation audio index — run `meeting devices` to find yours |
+| `MEETING_MAX_MIN` | `180` | auto-stop after N minutes (`0` = no cap) |
+| `MEETING_MIN_FREE_MB` | `500` | low-disk warning before recording |
+| `MEETING_PROMPT` | (unset) | override the glossary inline |
+
+## The glossary (the differentiator)
+
+whisper mis-hears domain terms. `~/.meeting/glossary.txt` is fed to whisper's `--prompt` so it
+spells them right. In Claude Code the agent maintains this file from your editor memory, repo, and
+past notes — so it learns *your* vocabulary over time. `meeting glossary` prints the current list.
+**This file is personal and never belongs in a repository.**
+
+## Privacy & consent
+
+- Recording + transcription run **entirely on your machine**; nothing is uploaded. Only
+  `meeting setup` (model download) and the Claude Code summary step use the network.
+- All data lives in `$MEETING_HOME` (default `~/.meeting`) and is **never committed** to this repo.
+- **Recording people may require their consent.** Follow the laws and policies that apply to you.
+
+## Troubleshooting
+
+- **Empty recording / "录音没起来"** → grant your terminal Microphone permission
+  (System Settings ▸ Privacy & Security ▸ Microphone), then retry.
+- **Wrong mic** → `meeting devices`, then `export MEETING_AUDIO_INPUT=:N`.
+- **`/meeting` not found in Claude Code** → restart Claude Code (skills load at session start).
+- **A recording got cut off by a crash** → `meeting recover`.
+
+## Limitations
+
+- **macOS / Apple Silicon only** right now (avfoundation capture; whisper.cpp Metal).
+- **No speaker diarization** yet — multi-person transcripts aren't split by speaker.
+- **Far-field multi-speaker accuracy** is much lower than a single close mic.
+- Capturing the *other side* of a Zoom call needs a virtual audio device (BlackHole) — see roadmap.
 
 ## Roadmap
 
 - [ ] Codex adapter (`skills/codex/`) — same core, second ecosystem
-- [ ] BlackHole auto-setup + Multi-Output device for Zoom system-audio capture
-- [ ] Speaker diarization (whisper.cpp `--tinydiarize` / pyannote)
+- [ ] Speaker diarization (whisper.cpp `tinydiarize` / pyannote)
+- [ ] System-audio capture (BlackHole / ScreenCaptureKit) for the Zoom other-side
+- [ ] WhisperKit backend (faster on Apple Silicon)
 - [ ] Live partial transcription while recording
-- [ ] Optional routing presets (Notion / Linear / file)
-- [ ] Recording-consent guardrail / banner
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). TL;DR: bash + `set -euo pipefail`, passes `shellcheck`,
+macOS-first, and **never commit runtime data**.
+
+## License
+
+MIT © pattypoem — see [LICENSE](LICENSE).
