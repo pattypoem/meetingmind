@@ -1,4 +1,4 @@
-# meeting-agent
+# MeetingMind
 
 > Agent-native meeting notes for your terminal. Record locally, transcribe locally
 > (whisper.cpp), and let your coding agent (Claude Code / Codex) do the summary,
@@ -7,7 +7,7 @@
 
 ![platform](https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-black)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![CI](https://github.com/pattypoem/meeting-agent/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/pattypoem/meetingmind/actions/workflows/ci.yml/badge.svg)
 
 **No app. No UI. No cloud.** One command in the terminal.
 
@@ -18,7 +18,7 @@
 ## Why this, not another meeting app
 
 The "local whisper + LLM summary" space is crowded (Granola, Hyprnote, Meetily, MacWhisper).
-meeting-agent doesn't compete on UX. Its bet:
+MeetingMind doesn't compete on UX. Its bet:
 
 - **Lives where you already work** — a terminal agent, not a separate app.
 - **Context-aware** — the agent builds a glossary from your editor memory / repo / past notes,
@@ -35,8 +35,8 @@ meeting-agent doesn't compete on UX. Its bet:
 ## Install
 
 ```bash
-git clone https://github.com/pattypoem/meeting-agent
-cd meeting-agent
+git clone https://github.com/pattypoem/meetingmind
+cd meetingmind
 ./install.sh        # symlinks bin/meeting to ~/.local/bin; installs the Claude Code skill
 meeting setup       # brew install whisper-cpp + download model (~1.6GB)
 ```

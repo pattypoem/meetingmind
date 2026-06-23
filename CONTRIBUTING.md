@@ -1,4 +1,4 @@
-# Contributing to meeting-agent
+# Contributing to MeetingMind
 
 Thanks for your interest! This is a small, deliberately-scoped tool — contributions that keep it
 simple are the most welcome.
@@ -17,8 +17,8 @@ everything else to stderr.
 ## Dev setup
 
 ```bash
-git clone https://github.com/pattypoem/meeting-agent
-cd meeting-agent && ./install.sh && meeting setup
+git clone https://github.com/pattypoem/meetingmind
+cd meetingmind && ./install.sh && meeting setup
 ```
 
 ## Before opening a PR

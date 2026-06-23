@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Write
 驱动 agent 无关的 `meeting` CLI(录音 + 本地 whisper 转录),智能那一半由我做:
 术语表、摘要、决策、行动项、归档、纠错。**CLI 只产出文字稿,内容全靠我读稿生成,绝不编造。**
 
-CLI:`~/meeting-agent/bin/meeting`(已 symlink 到 PATH)。
+CLI:`meeting`(install.sh 已 symlink 到 PATH;源码在仓库 `bin/meeting`)。
 **实时录音建议用户直接在终端跑 `meeting rec`**(前台 + 实时电平条 + Ctrl-C 结束并转录)——回合制 agent 给不了实时反馈;`/meeting` 主要用于整理。
 
 ## 术语表(每次整理/转录前先维护)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Template for a meeting-agent ASR backend. Copy to <name>.sh, then select with MEETING_ASR=<name>.
+# Template for a MeetingMind ASR backend. Copy to <name>.sh, then select with MEETING_ASR=<name>.
 #
 # Contract:
 #   - invoked as:  <name>.sh <audio_path> <out_base> <lang>
