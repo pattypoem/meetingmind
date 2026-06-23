@@ -85,6 +85,7 @@ Recording is real-time; a terminal agent is turn-based. So there are **two modes
 | `MEETING_HOME` | `~/.meeting` | where recordings / models / notes / glossary live |
 | `MEETING_MODEL` | `…/ggml-large-v3-turbo.bin` | whisper model (point at a smaller/quantized one for slower machines) |
 | `MEETING_LANG` | `auto` | `zh` / `en` / `auto` |
+| `MEETING_ASR` | `whisper` | transcription backend: `whisper`/`faster-whisper`/`openai`/`deepgram` — see [backends](backends/) |
 | `MEETING_AUDIO_INPUT` | `:0` | avfoundation audio index — run `meeting devices` to find yours |
 | `MEETING_MAX_MIN` | `180` | auto-stop after N minutes (`0` = no cap) |
 | `MEETING_MIN_FREE_MB` | `500` | low-disk warning before recording |
@@ -96,6 +97,21 @@ whisper mis-hears domain terms. `~/.meeting/glossary.txt` is fed to whisper's `-
 spells them right. In Claude Code the agent maintains this file from your editor memory, repo, and
 past notes — so it learns *your* vocabulary over time. `meeting glossary` prints the current list.
 **This file is personal and never belongs in a repository.**
+
+## Transcription backends
+
+The default is local **whisper.cpp** (offline, private). For higher accuracy you can switch
+backends with `MEETING_ASR` and your own API key — `meeting` warns before any cloud upload:
+
+```bash
+MEETING_ASR=openai   OPENAI_API_KEY=...    meeting transcribe rec.wav   # OpenAI
+MEETING_ASR=deepgram DEEPGRAM_API_KEY=...  meeting transcribe rec.wav   # Deepgram (+ diarization)
+MEETING_ASR=faster-whisper                 meeting transcribe rec.wav   # local, no key
+```
+
+Built-in: `whisper` (default), `faster-whisper` (local), `openai`, `deepgram`. Adding a provider is
+a single script in [`backends/`](backends/) — see [backends/README.md](backends/README.md).
+Best-for-Chinese providers (讯飞 / 阿里) are scaffolded there as wanted contributions.
 
 ## Privacy & consent
 

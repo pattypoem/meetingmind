@@ -26,6 +26,12 @@ LANG_OPT="${MEETING_LANG:-auto}"           # zh / en / auto
 MAX_MIN="${MEETING_MAX_MIN:-180}"          # auto-stop after N min (0 = no cap) — prevents runaway recordings
 MIN_FREE_MB="${MEETING_MIN_FREE_MB:-500}"  # warn if free disk < this before recording
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+ASR="${MEETING_ASR:-whisper}"              # transcription backend: whisper(default) / openai / deepgram / faster-whisper / …
+
+# Resolve the repo's backends/ dir (this script may be symlinked into ~/.local/bin).
+_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_self" ]; do _l="$(readlink "$_self")"; case "$_l" in /*) _self="$_l";; *) _self="$(dirname "$_self")/$_l";; esac; done
+BACKENDS_DIR="${MEETING_BACKENDS_DIR:-$(cd "$(dirname "$_self")/.." 2>/dev/null && pwd)/backends}"
 
 mkdir -p "$REC_DIR" "$MODEL_DIR" "$NOTES_DIR"
 
@@ -161,21 +167,32 @@ meeting_prompt(){
 cmd_transcribe(){
   audio="${1:-$(cat "$STATE" 2>/dev/null || true)}"
   [ -n "$audio" ] && [ -f "$audio" ] || die "no audio file to transcribe."
-  bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
-  [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
   base="${audio%.*}"; prompt="$(meeting_prompt)"
-  # Foolproofing: a Ctrl-C here is SAFE (audio is already on disk). Say so loudly and tell the
-  # user how to resume, instead of dying with a bare ^C that looks like data loss.
+  # Foolproofing: a Ctrl-C here is SAFE (audio is already on disk). Say so loudly + how to resume.
   trap 'printf "\n" >&2; echo "⚠ 转录已中断 —— 音频安全保存在: $audio" >&2; echo "  随时补转录:  meeting transcribe \"$audio\"   (或 meeting recover)" >&2; exit 130' INT
-  echo "… 本地转录中 ($(basename "$MODEL"))$([ -n "$prompt" ] && printf ' + 术语表')  —— 可 Ctrl-C 中断(音频已存,稍后 meeting recover 即可);进度见下方 …" >&2
-  # -otxt: clean text (agent reads this);  -osrt: timestamped transcript (for navigation/notes)
-  if [ -n "$prompt" ]; then
-    "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" --prompt "$prompt" -pp -otxt -osrt -of "$base" 1>/dev/null
+  if [ "$ASR" = "whisper" ]; then
+    # default: local whisper.cpp — offline, private. -otxt clean text, -osrt timestamps.
+    bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
+    [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
+    echo "… 本地转录中 (whisper: $(basename "$MODEL"))$([ -n "$prompt" ] && printf ' + 术语表')  —— 可 Ctrl-C 中断(音频已存);进度见下方 …" >&2
+    if [ -n "$prompt" ]; then
+      "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" --prompt "$prompt" -pp -otxt -osrt -of "$base" 1>/dev/null
+    else
+      "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -osrt -of "$base" 1>/dev/null
+    fi
   else
-    "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -osrt -of "$base" 1>/dev/null
+    # pluggable backend: backends/<ASR>.sh  (contract: writes $base.txt [+ $base.srt])
+    be="$BACKENDS_DIR/$ASR.sh"
+    [ -f "$be" ] || die "未知 MEETING_ASR='$ASR'(找不到 $be)。内置:whisper(默认)/openai/deepgram/faster-whisper;见 backends/README.md"
+    case "$ASR" in openai|deepgram|assemblyai|elevenlabs|xfyun|alibaba)
+      echo "⚠ 后端 '$ASR' 会把音频上传到云端 —— 要全本地请用 MEETING_ASR=whisper。" >&2 ;;
+    esac
+    echo "… 用 '$ASR' 后端转录中(音频已存,中断可 meeting recover)…" >&2
+    MEETING_PROMPT_TEXT="$prompt" bash "$be" "$audio" "$base" "$LANG_OPT"
+    [ -f "$base.txt" ] || die "后端 '$ASR' 未产出转录稿($base.txt)"
   fi
   trap - INT
-  echo "✓ 转录完成 → $base.txt   (带时间戳: $base.srt)" >&2
+  echo "✓ 转录完成 → $base.txt$([ -f "$base.srt" ] && printf '   (带时间戳: %s.srt)' "$base")" >&2
   echo "$base.txt"      # <- final stdout: the transcript path
 }
 

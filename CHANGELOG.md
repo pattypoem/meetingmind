@@ -15,6 +15,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   action items) and files notes to `~/.meeting/notes/`.
 - Robustness: verified start (catches denied mic permission), `MEETING_MAX_MIN` auto-stop cap,
   low-disk warning, atomic model download, and crash recovery (`meeting recover`).
+- Timestamped `.srt` output alongside `.txt`; transcription is safely interruptible (Ctrl-C tells
+  you the audio is saved and how to resume).
+- Pluggable ASR backends via `MEETING_ASR`: local `whisper` (default) / `faster-whisper`, cloud
+  `openai` / `deepgram` (bring-your-own-key, with a privacy warning); `backends/` extension point
+  (讯飞 / 阿里 scaffolded as wanted contributions).
 
 ### Known limitations
 - macOS / Apple Silicon only; no speaker diarization; no Zoom system-audio capture yet.
