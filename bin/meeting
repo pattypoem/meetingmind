@@ -26,6 +26,11 @@ LANG_OPT="${MEETING_LANG:-auto}"           # zh / en / auto
 MAX_MIN="${MEETING_MAX_MIN:-180}"          # auto-stop after N min (0 = no cap) — prevents runaway recordings
 MIN_FREE_MB="${MEETING_MIN_FREE_MB:-500}"  # warn if free disk < this before recording
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+VAD="${MEETING_VAD:-1}"                     # 1 = skip silence via VAD (kills silence-hallucination loops), 0 = off
+VAD_MODEL="${MEETING_VAD_MODEL:-$MODEL_DIR/ggml-silero-v5.1.2.bin}"
+VAD_URL="https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+# known whisper silence-hallucinations (training-data outros); suppressed via --suppress-regex
+SUPPRESS_RE="${MEETING_SUPPRESS_RE:-请不吝点赞|订阅|转发|打赏|明镜|点点栏目|感谢观看|请关注|关注我}"
 ASR="${MEETING_ASR:-whisper}"              # transcription backend: whisper(default) / openai / deepgram / faster-whisper / …
 
 # Resolve the repo's backends/ dir (this script may be symlinked into ~/.local/bin).
@@ -174,12 +179,19 @@ cmd_transcribe(){
     # default: local whisper.cpp — offline, private. -otxt clean text, -osrt timestamps.
     bin="$(whisper_bin)"; [ -n "$bin" ] || die "whisper.cpp not installed — run: meeting setup"
     [ -f "$MODEL" ] || die "model missing: $MODEL — run: meeting setup"
-    echo "… 本地转录中 (whisper: $(basename "$MODEL"))$([ -n "$prompt" ] && printf ' + 术语表')  —— 可 Ctrl-C 中断(音频已存);进度见下方 …" >&2
-    if [ -n "$prompt" ]; then
-      "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" --prompt "$prompt" -pp -otxt -osrt -of "$base" 1>/dev/null
-    else
-      "$bin" -m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -osrt -of "$base" 1>/dev/null
+    # anti-hallucination: -sns drops non-speech tokens; --suppress-regex nukes the known
+    # silence-hallucination phrases; VAD skips silence entirely (the main cause of repeat loops).
+    wargs=(-m "$MODEL" -f "$audio" -l "$LANG_OPT" -pp -otxt -osrt -of "$base" -sns)
+    [ -n "$prompt" ] && wargs+=(--prompt "$prompt")
+    [ -n "$SUPPRESS_RE" ] && wargs+=(--suppress-regex "$SUPPRESS_RE")
+    vadnote=""
+    if [ "$VAD" = "1" ] && [ -f "$VAD_MODEL" ]; then
+      wargs+=(--vad --vad-model "$VAD_MODEL"); vadnote=" + VAD"
+    elif [ "$VAD" = "1" ]; then
+      echo "(提示:未装 VAD 模型,本次不防幻觉;跑 'meeting setup' 可下载启用)" >&2
     fi
+    echo "… 本地转录中 (whisper: $(basename "$MODEL"))$([ -n "$prompt" ] && printf ' + 术语表')$vadnote  —— 可 Ctrl-C 中断(音频已存);进度见下方 …" >&2
+    "$bin" "${wargs[@]}" 1>/dev/null
   else
     # pluggable backend: backends/<ASR>.sh  (contract: writes $base.txt [+ $base.srt])
     be="$BACKENDS_DIR/$ASR.sh"
@@ -235,7 +247,11 @@ cmd_setup(){
     tmp="$MODEL.part"
     if curl -L --fail -o "$tmp" "$MODEL_URL"; then mv -f "$tmp" "$MODEL"; else rm -f "$tmp"; die "model download failed (network?). re-run: meeting setup"; fi
   fi
-  echo "setup ok. whisper=$(whisper_bin) model=$MODEL" >&2
+  if [ ! -f "$VAD_MODEL" ]; then
+    echo "downloading VAD model (silero, ~2MB) → $VAD_MODEL" >&2
+    if curl -L --fail -o "$VAD_MODEL.part" "$VAD_URL"; then mv -f "$VAD_MODEL.part" "$VAD_MODEL"; else rm -f "$VAD_MODEL.part"; echo "⚠ VAD 模型下载失败(不影响转录,只是少了防幻觉);可稍后重试 meeting setup" >&2; fi
+  fi
+  echo "setup ok. whisper=$(whisper_bin) model=$MODEL vad=$([ -f "$VAD_MODEL" ] && echo on || echo off)" >&2
 }
 
 case "${1:-}" in

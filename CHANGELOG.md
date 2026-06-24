@@ -20,6 +20,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Pluggable ASR backends via `MEETING_ASR`: local `whisper` (default) / `faster-whisper`, cloud
   `openai` / `deepgram` (bring-your-own-key, with a privacy warning); `backends/` extension point
   (讯飞 / 阿里 scaffolded as wanted contributions).
+- Anti-hallucination for local whisper: Silero VAD (skips silence) + `-sns` + `--suppress-regex`
+  kill the silence-hallucination loops (repeated 请点赞 / 感谢观看 / stuck phrases). `MEETING_VAD=0`
+  to disable; VAD model auto-downloaded by `meeting setup`.
 
 ### Known limitations
 - macOS / Apple Silicon only; no speaker diarization; no Zoom system-audio capture yet.

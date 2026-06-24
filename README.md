@@ -86,6 +86,7 @@ Recording is real-time; a terminal agent is turn-based. So there are **two modes
 | `MEETING_MODEL` | `…/ggml-large-v3-turbo.bin` | whisper model (point at a smaller/quantized one for slower machines) |
 | `MEETING_LANG` | `auto` | `zh` / `en` / `auto` |
 | `MEETING_ASR` | `whisper` | transcription backend: `whisper`/`faster-whisper`/`openai`/`deepgram` — see [backends](backends/) |
+| `MEETING_VAD` | `1` | skip silence via VAD to avoid whisper hallucination loops (`0` to disable) |
 | `MEETING_AUDIO_INPUT` | `:0` | avfoundation audio index — run `meeting devices` to find yours |
 | `MEETING_MAX_MIN` | `180` | auto-stop after N minutes (`0` = no cap) |
 | `MEETING_MIN_FREE_MB` | `500` | low-disk warning before recording |
